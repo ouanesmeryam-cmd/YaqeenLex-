@@ -330,7 +330,11 @@
                opened from inside those overlays
     100020   → registration-success confirmation overlay — must appear
                above every other overlay including the auth flow that
-               triggers it */
+               triggers it
+    100025   → [NEW] first-visit onboarding tour overlay — shown once,
+               before any user interaction, so it must be able to sit
+               above literally anything else that could theoretically
+               already be open (auth/regsuccess included) */
   --z-hero-bg: -50;
   --z-scroll-hint: 40;
   --z-nav-dropdown: 200;
@@ -343,12 +347,27 @@
   --z-modal-audit: 9500;
   --z-drawer-overlay: 9997;
   --z-drawer: 9998;
-  --z-toast: 9999;
   --z-skip-link: 10000;
   --z-modal-premium: 11000;
   --z-modal-auth: 100000;
   --z-modal-fullscreen: 100010;
   --z-modal-topmost: 100020;
+  --z-onboarding: 100025;
+  /* [FIX — "تواصل معنا زر لا يعمل" / "الضغط على أزرار من داخل الخدمات
+     المتقدمة لا يعطي أي استجابة"] --z-toast used to sit at 9999 — below
+     EVERY modal/overlay layer above (avs-overlay/Advanced Services Hub,
+     Premium, Auth, the fullscreen About/Blog/Services/Contact/Terms/
+     Legal/Audit modals, onboarding, …). showToast() itself always ran
+     correctly (adds the .show class, sets the text) — but any toast
+     triggered while one of those overlays was open rendered fully
+     BEHIND it and was invisible, which is exactly what made restricted-
+     access buttons like the "لوحة الإدارة" card's "تواصل معنا" (inside
+     the Advanced Services Hub) and the "تفاصيل تقنية" buttons on the
+     "بانتظار الربط الخلفي" cards look like they silently did nothing.
+     A toast is a transient, corner-anchored notification that must
+     always be readable no matter what else is open, so it now sits
+     above every other z-index in the stack, onboarding included. */
+  --z-toast: 100030;
 }
 
 * {
@@ -5082,6 +5101,231 @@ body.ltr-mode .yqn-user-dropdown-item:hover {
   color: #fff;
   border-color: rgb(255,255,255);
 }
+
+/* ============================================================
+   [NEW] FIRST-VISIT ONBOARDING TOUR — #yqnOnboardingOverlay.
+   Shown once, before any auth interaction (see the trigger script
+   right after this overlay's markup). One welcome step (0) + 5
+   feature steps (1-5), single-file stepper (no routing).
+
+   [REVISED — user asked for it to look/feel identical to the login
+   page, not just a copy of the regsuccess styling: backdrop, card
+   gradient, hero-pattern texture layer and radial glow now literally
+   reuse .yqn-auth-overlay/.yqn-auth-card/.yqn-auth-full-bg (the card
+   element carries both classes — see markup), so any future change
+   to the login look updates onboarding too instead of the two
+   silently drifting apart. Only the stepper-specific chrome (dots,
+   nav buttons, floating logo) is defined here.]
+   ============================================================ */
+.yqn-onboarding-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-onboarding);
+  /* identical to .yqn-auth-overlay's backdrop, not the flatter
+     regsuccess one — this is the "spotlight" look the login page
+     uses and what was actually being asked for */
+  background: radial-gradient(ellipse at center, rgba(255,255,255,0.66) 0%, rgba(5,12,40,.97) 100%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: yqnFadeIn .35s ease both;
+}
+
+.yqn-onboarding-overlay.active { display: flex; }
+.yqn-onboarding-overlay.closing { animation: yqnFadeOut .25s ease both; }
+
+/* Card reuses .yqn-auth-card for gradient/border/shadow/hero-texture/
+   glow (all inherited automatically via the shared class on the
+   element) — this block only adds what the login card doesn't need:
+   centered text, stepper padding, and a slow ambient gold pulse on
+   top of the login's own entrance animation. */
+.yqn-onboarding-card.yqn-auth-card {
+  max-width: 460px;
+  padding: 40px 32px 30px;
+  text-align: center;
+  animation: yqnSlideUp .45s cubic-bezier(.2,.9,.3,1.3) both,
+             yqnOnbCardGlow 4s ease-in-out .8s infinite;
+}
+
+.yqn-onboarding-overlay.closing .yqn-onboarding-card {
+  animation: yqnTermsScaleOut .25s ease both;
+}
+
+@keyframes yqnOnbCardGlow {
+  0%, 100% { box-shadow: 0 36px 90px rgba(0,0,0,.55), 0 0 0 1px rgba(196,150,58,.25), 0 0 0 rgba(201,162,39,0); }
+  50%      { box-shadow: 0 36px 90px rgba(0,0,0,.55), 0 0 0 1px rgba(196,150,58,.4), 0 0 46px rgba(201,162,39,.28); }
+}
+
+.yqn-onb-skip {
+  position: absolute;
+  top: 14px;
+  left: 16px; /* RTL: page flows right-to-left, so "top-left" is the
+                 trailing corner — matches every other overlay's close
+                 control position on this platform */
+  background: transparent;
+  border: none;
+  color: var(--ink-soft);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 6px;
+  z-index: 2;
+  transition: color .2s ease;
+}
+.yqn-onb-skip:hover { color: #fff; }
+
+.yqn-onb-step { display: none; position: relative; z-index: 1; }
+.yqn-onb-step.active { display: block; animation: yqnOnbStepIn .35s cubic-bezier(.2,.9,.3,1.1) both; }
+
+@keyframes yqnOnbStepIn {
+  from { opacity: 0; transform: translateY(10px) scale(.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Floating logo — welcome step only. A slow vertical bob, a pulsing
+   gold halo behind it, and a grounding shadow beneath that shrinks
+   as the mark rises, so it reads as a levitating emblem rather than
+   a static image ("عائم" — same visual family as the site's other
+   floating/glowing gold accents, e.g. --gold-glow). */
+.yqn-onb-logo-wrap {
+  position: relative;
+  width: 92px;
+  height: 92px;
+  margin: 4px auto 20px;
+}
+.yqn-onb-logo-halo {
+  position: absolute;
+  inset: -20px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--gold-glow) 0%, rgba(201,162,39,0) 72%);
+  animation: yqnOnbHaloPulse 3.2s ease-in-out infinite;
+  pointer-events: none;
+}
+.yqn-onb-logo-float {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  animation: yqnOnbFloat 4.6s ease-in-out infinite;
+  filter: drop-shadow(0 14px 16px rgba(0,0,0,.5));
+}
+.yqn-onb-logo-shadow {
+  position: absolute;
+  bottom: -10px;
+  left: 50%;
+  width: 44px;
+  height: 9px;
+  background: rgba(0,0,0,.45);
+  border-radius: 50%;
+  filter: blur(4px);
+  transform: translateX(-50%);
+  animation: yqnOnbShadowPulse 4.6s ease-in-out infinite;
+}
+@keyframes yqnOnbFloat {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-11px); }
+}
+@keyframes yqnOnbHaloPulse {
+  0%, 100% { opacity: .5;  transform: scale(1); }
+  50%      { opacity: .85; transform: scale(1.14); }
+}
+@keyframes yqnOnbShadowPulse {
+  0%, 100% { opacity: .5;  transform: translateX(-50%) scale(1); }
+  50%      { opacity: .22; transform: translateX(-50%) scale(.66); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .yqn-onb-logo-halo, .yqn-onb-logo-float, .yqn-onb-logo-shadow,
+  .yqn-onboarding-card.yqn-auth-card { animation: none !important; }
+}
+
+.yqn-onb-welcome-title {
+  font-family: var(--f-display);
+  color: #fff;
+  font-size: 24px;
+  margin: 0 0 10px;
+}
+.yqn-onb-welcome-tagline {
+  font-family: var(--f-display);
+  color: var(--gold-soft);
+  font-size: 13px;
+  font-style: italic;
+  margin: 0 0 16px;
+}
+.yqn-onb-welcome-body {
+  color: rgb(255,255,255);
+  font-size: 14px;
+  line-height: 1.8;
+  margin: 0 0 26px;
+}
+
+.yqn-onb-feature-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 18px;
+  transition: transform .25s ease;
+}
+.yqn-onb-feature-icon .tool-icon-badge {
+  width: 64px;
+  height: 64px;
+  transition: border-color .25s ease, background .25s ease, box-shadow .25s ease;
+}
+.yqn-onb-feature-icon .tool-icon { width: 30px; height: 30px; }
+/* interactive hover/tap — the .tool-card:hover rule this badge
+   normally relies on doesn't apply here (no .tool-card ancestor), so
+   it's restated directly on the icon's own wrapper */
+.yqn-onb-feature-icon:hover,
+.yqn-onb-feature-icon:focus-within { transform: translateY(-3px); }
+.yqn-onb-feature-icon:hover .tool-icon-badge,
+.yqn-onb-feature-icon:focus-within .tool-icon-badge {
+  box-shadow: inset 0 1px 2px rgba(255,255,255,.16), inset 0 -2px 6px rgba(0,0,0,.25), 0 0 14px rgba(56,150,255,.35);
+  border-color: #5EB3FF;
+  background: radial-gradient(circle at 32% 28%, rgba(94,179,255,.32), rgba(56,150,255,.12) 70%);
+}
+
+.yqn-onb-step h3 {
+  font-family: var(--f-display);
+  color: #fff;
+  font-size: 19px;
+  margin: 0 0 10px;
+}
+.yqn-onb-step p.yqn-onb-feature-desc {
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.7;
+  margin: 0 0 22px;
+}
+
+.yqn-onb-dots {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0 0 22px;
+}
+.yqn-onb-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(255,255,255,.25);
+  transition: background .2s ease, transform .2s ease;
+}
+.yqn-onb-dot.active {
+  background: var(--gold-soft);
+  transform: scale(1.3);
+  box-shadow: 0 0 8px rgba(201,162,39,.6);
+}
+
+.yqn-onb-nav-actions {
+  display: none;
+  gap: 10px;
+  position: relative;
+  z-index: 1;
+}
+.yqn-onb-nav-actions .yqn-regsuccess-btn { flex: 1; }
+#yqnOnbBackBtn.yqn-onb-hidden { visibility: hidden; }
+
 
 /* ============================================================
    [NEW] SUBSCRIPTION CHECKOUT SIMULATION — #yqnCheckoutOverlay.
@@ -16265,6 +16509,16 @@ body.ltr-mode .docmgr-progress-bar {
       <!-- CTA -->
       <div style="text-align:center;margin-top:26px;">
         <button type="button" class="btn-cta" id="yqnAboutFullCta">جرب YaqeenLex الآن ←</button>
+        <div style="margin-top:14px;">
+          <!-- [NEW] Replay entry point for the first-visit onboarding tour
+               (#yqnOnboardingOverlay) — without this, the only way to see
+               it again after the once-per-browser localStorage flag is
+               set is to clear browser storage manually, which is exactly
+               the confusing "it just doesn't show up anymore" situation
+               a returning visitor (or a reviewer re-testing the build)
+               would otherwise hit. -->
+          <button type="button" id="yqnAboutReplayTour" style="background:transparent;border:none;color:var(--gold-soft);font-family:inherit;font-size:13px;cursor:pointer;text-decoration:underline;padding:4px 6px;">أعد مشاهدة الجولة التعريفية</button>
+        </div>
       </div>
 
     </div>
@@ -16497,17 +16751,17 @@ body.ltr-mode .docmgr-progress-bar {
         </div>
         <div class="avs-card">
           <div class="avs-icon"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></div>
-          <span class="avs-badge avs-badge-soon">بانتظار الربط الخلفي</span>
+          <span class="avs-badge avs-badge-beta">تجريبية</span>
           <h4>العدالة التنبؤية</h4>
-          <p>مؤشرات احتمالية لمآل القضايا استناداً إلى السوابق القضائية.</p>
-          <button type="button" class="btn-cta avs-open-btn" onclick="showToast&&showToast(yqnT('toast_iface_ready_title'), yqnT('toast_iface_ready_body_ml'));">تفاصيل تقنية</button>
+          <p>مؤشر نوعي حي لكثافة السوابق وعوامل التعقيد لموضوع مختار — وليس نسبة احتمالية مدرَّبة على بيانات أحكام حقيقية.</p>
+          <button type="button" class="btn-cta avs-open-btn" onclick="window.YQN_openPredictiveJustice&&window.YQN_openPredictiveJustice();window.YQN_closeAdvHub&&window.YQN_closeAdvHub();">شغّل المؤشر ←</button>
         </div>
         <div class="avs-card">
           <div class="avs-icon"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg></div>
-          <span class="avs-badge avs-badge-soon">قريباً</span>
+          <span class="avs-badge avs-badge-beta">تجريبية</span>
           <h4>محاكي الأثر الدستوري</h4>
-          <p>محاكاة أثر أي قانون مقترح على المنظومة القانونية قبل إصداره.</p>
-          <button type="button" class="btn-cta avs-open-btn" onclick="document.getElementById('killer')&&document.getElementById('killer').scrollIntoView({behavior:'smooth',block:'start'});window.YQN_closeAdvHub&&window.YQN_closeAdvHub();">عرض خارطة الطريق ←</button>
+          <p>تحليل آلي حي لأثر أي موضوع من "الربط الذكي الرباعي" — نسخة تجريبية قائمة على قواعد فحص، وليست نموذج تعلّم آلي.</p>
+          <button type="button" class="btn-cta avs-open-btn" onclick="window.YQN_openKillerDemo&&window.YQN_openKillerDemo(3);window.YQN_closeAdvHub&&window.YQN_closeAdvHub();">شغّل المحاكاة ←</button>
         </div>
         </div>
       </section>
@@ -16848,6 +17102,203 @@ body.ltr-mode .docmgr-progress-bar {
   </div>
 </div>
 
+
+<!-- ============================================================
+     [NEW] FIRST-VISIT ONBOARDING TOUR — #yqnOnboardingOverlay.
+     One welcome step + a 5-step tour through YaqeenLex's real core
+     tools — same icons/copy as the homepage tools-grid (section
+     "خدمات YaqeenLex الأساسية") on purpose, to avoid two diverging
+     descriptions of the same 5 features. Shown once per browser via
+     the 'yqn_onboardingSeen' localStorage flag — see the trigger
+     script right after this markup, which runs independently of
+     boot()'s DB chain (same reasoning as the Theme.init() eager-init
+     fix above: nothing here needs the legal-corpus database).
+     ============================================================ -->
+<div class="yqn-onboarding-overlay" id="yqnOnboardingOverlay" role="dialog" aria-modal="true" aria-labelledby="yqnOnbTitle">
+  <div class="yqn-onboarding-card yqn-auth-card">
+    <div class="yqn-auth-full-bg" aria-hidden="true"></div>
+    <button type="button" class="yqn-onb-skip" id="yqnOnbSkipBtn">تخطي</button>
+
+    <!-- Step 0: welcome -->
+    <div class="yqn-onb-step active" data-onb-step="0">
+      <div class="yqn-onb-logo-wrap">
+        <div class="yqn-onb-logo-halo" aria-hidden="true"></div>
+        <div class="yqn-onb-logo-float brand-mark logo-icon" role="img" aria-label="YaqeenLex"></div>
+        <div class="yqn-onb-logo-shadow" aria-hidden="true"></div>
+      </div>
+      <h2 id="yqnOnbTitle" class="yqn-onb-welcome-title">مرحبًا بك في <span style="color:var(--gold-soft)">YaqeenLex</span></h2>
+      <p class="yqn-onb-welcome-tagline">من رحم الجامعة الجزائرية، نحو سيادة رقمية للعدالة الدستورية</p>
+      <p class="yqn-onb-welcome-body">منصة قانونية رقمية سيادية تجمع الأرشيف القانوني الجزائري الرسمي بتقنيات الذكاء الاصطناعي، ضمن رؤية تحافظ على المرجعية الرسمية وتعزّز السيادة الرقمية.</p>
+      <div class="yqn-regsuccess-actions">
+        <button type="button" class="yqn-regsuccess-btn primary" id="yqnOnbStartBtn">ابدأ الجولة السريعة</button>
+      </div>
+    </div>
+
+    <!-- Step 1 — same icon/copy as tool-card[data-svc="1"] -->
+    <div class="yqn-onb-step" data-onb-step="1">
+      <div class="yqn-onb-feature-icon"><div class="tool-icon-badge"><span class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12c0 4.14-3.94 7.5-8.8 7.5-.98 0-1.92-.13-2.8-.38L4 21l1.1-3.6C3.8 16 3.2 14.1 3.2 12 3.2 7.86 7.14 4.5 12 4.5S21 7.86 21 12Z"/><path d="M8.5 11h7M8.5 14h4.5"/></svg></span></div></div>
+      <h3>المساعد القانوني الذكي</h3>
+      <p class="yqn-onb-feature-desc">اسأل باللغة العربية واحصل على إجابات قانونية موثقة من المصادر الرسمية.</p>
+    </div>
+
+    <!-- Step 2 — same icon/copy as tool-card[data-svc="2"] -->
+    <div class="yqn-onb-step" data-onb-step="2">
+      <div class="yqn-onb-feature-icon"><div class="tool-icon-badge"><span class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#yqn-ic-29"></use></svg></span></div></div>
+      <h3>البحث القانوني</h3>
+      <p class="yqn-onb-feature-desc">بحث ذكي في الدستور والتشريعات والجريدة الرسمية والاجتهادات القضائية.</p>
+    </div>
+
+    <!-- Step 3 — same icon/copy as tool-card[data-svc="3"] -->
+    <div class="yqn-onb-step" data-onb-step="3">
+      <div class="yqn-onb-feature-icon"><div class="tool-icon-badge"><span class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#yqn-ic-14"></use></svg></span></div></div>
+      <h3>تحليل الوثائق</h3>
+      <p class="yqn-onb-feature-desc">تحليل الوثائق القانونية واستخراج المواد القانونية والروابط المرجعية تلقائياً.</p>
+    </div>
+
+    <!-- Step 4 — same icon/copy as tool-card[data-svc="5"] -->
+    <div class="yqn-onb-step" data-onb-step="4">
+      <div class="yqn-onb-feature-icon"><div class="tool-icon-badge"><span class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 5 6v5.5C5 15.5 8 18.7 12 20.5c4-1.8 7-5 7-9V6Z"/><path d="m9 12 2 2 4-4"/></svg></span></div></div>
+      <h3>لوحة الامتثال</h3>
+      <p class="yqn-onb-feature-desc">تقييم مدى توافق المشاريع والوثائق مع المنظومة القانونية الجزائرية.</p>
+    </div>
+
+    <!-- Step 5 — same icon/copy as tool-card[data-svc="8"] -->
+    <div class="yqn-onb-step" data-onb-step="5">
+      <div class="yqn-onb-feature-icon"><div class="tool-icon-badge"><span class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#yqn-ic-15"></use></svg></span></div></div>
+      <h3>إنشاء المذكرات</h3>
+      <p class="yqn-onb-feature-desc">صياغة مذكرات قانونية احترافية اعتماداً على المصادر الرسمية.</p>
+    </div>
+
+    <div class="yqn-onb-dots" id="yqnOnbDots">
+      <span class="yqn-onb-dot" data-onb-dot="0"></span>
+      <span class="yqn-onb-dot" data-onb-dot="1"></span>
+      <span class="yqn-onb-dot" data-onb-dot="2"></span>
+      <span class="yqn-onb-dot" data-onb-dot="3"></span>
+      <span class="yqn-onb-dot" data-onb-dot="4"></span>
+    </div>
+
+    <div class="yqn-onb-nav-actions" id="yqnOnbNavActions">
+      <button type="button" class="yqn-regsuccess-btn ghost" id="yqnOnbBackBtn">السابق</button>
+      <button type="button" class="yqn-regsuccess-btn primary" id="yqnOnbNextBtn">التالي</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var OVERLAY_ID = 'yqnOnboardingOverlay';
+  var SEEN_KEY = 'yqn_onboardingSeen';
+  var STEPS_TOTAL = 5;
+  var currentStep = 0;
+
+  function byId(id){ return document.getElementById(id); }
+
+  function render(){
+    var overlay = byId(OVERLAY_ID);
+    if(!overlay) return;
+    var steps = overlay.querySelectorAll('.yqn-onb-step');
+    for(var i=0; i<steps.length; i++){
+      var isActive = Number(steps[i].getAttribute('data-onb-step')) === currentStep;
+      steps[i].classList.toggle('active', isActive);
+    }
+    var dotsWrap = byId('yqnOnbDots');
+    var navWrap = byId('yqnOnbNavActions');
+    var inTour = currentStep >= 1;
+    if(dotsWrap) dotsWrap.style.display = inTour ? 'flex' : 'none';
+    if(navWrap) navWrap.style.display = inTour ? 'flex' : 'none';
+    var dots = overlay.querySelectorAll('.yqn-onb-dot');
+    for(var j=0; j<dots.length; j++){
+      dots[j].classList.toggle('active', Number(dots[j].getAttribute('data-onb-dot')) === currentStep - 1);
+    }
+    var backBtn = byId('yqnOnbBackBtn');
+    var nextBtn = byId('yqnOnbNextBtn');
+    if(backBtn) backBtn.classList.toggle('yqn-onb-hidden', currentStep <= 1);
+    if(nextBtn) nextBtn.textContent = currentStep === STEPS_TOTAL ? 'بدء الاستخدام' : 'التالي';
+  }
+
+  // [FIX — reported bug: platform loads fine on a phone, but the
+  // onboarding tour never appears at all] localStorage.getItem/setItem
+  // throws a SecurityError for file:// pages in WebKit/Safari (a
+  // long-standing, documented engine restriction — desktop Chrome does
+  // NOT do this, which is why this wasn't caught by earlier testing).
+  // The old code wrapped the read in try/catch with an empty catch, so
+  // on Safari the exception was swallowed and showOnboarding() was
+  // simply never reached — failing CLOSED. These two helpers fail OPEN
+  // instead: if storage isn't readable/writable, treat it as "not seen
+  // yet" so the tour still shows (worst case on Safari file:// it shows
+  // on every visit, since nothing can be persisted there — strictly
+  // better than never showing at all).
+  function onbSeen(){
+    try{ return localStorage.getItem(SEEN_KEY) === '1'; }
+    catch(e){ return false; }
+  }
+  function onbMarkSeen(){
+    try{ localStorage.setItem(SEEN_KEY, '1'); }catch(e){ /* non-fatal — see onbSeen() comment above */ }
+  }
+
+  function showOnboarding(){
+    currentStep = 0;
+    render();
+    var overlay = byId(OVERLAY_ID);
+    if(overlay) overlay.classList.add('active');
+  }
+
+  function hideOnboarding(){
+    var overlay = byId(OVERLAY_ID);
+    if(overlay){
+      overlay.classList.add('closing');
+      setTimeout(function(){ overlay.classList.remove('active','closing'); }, 250);
+    }
+    onbMarkSeen();
+  }
+
+  // Exposed for manual re-trigger (dev console / a future "شاهد الجولة
+  // مرة أخرى" link) — same pattern as window.YaqeenLex exposing
+  // internals elsewhere in this file for debugging.
+  window.YQN_showOnboarding = showOnboarding;
+
+  document.addEventListener('DOMContentLoaded', function(){
+    var overlay = byId(OVERLAY_ID);
+    if(!overlay) return;
+
+    var skipBtn = byId('yqnOnbSkipBtn');
+    var startBtn = byId('yqnOnbStartBtn');
+    var backBtn = byId('yqnOnbBackBtn');
+    var nextBtn = byId('yqnOnbNextBtn');
+
+    if(skipBtn) skipBtn.addEventListener('click', hideOnboarding);
+    if(startBtn) startBtn.addEventListener('click', function(){ currentStep = 1; render(); });
+    if(backBtn) backBtn.addEventListener('click', function(){
+      if(currentStep > 1){ currentStep--; render(); }
+    });
+    if(nextBtn) nextBtn.addEventListener('click', function(){
+      if(currentStep < STEPS_TOTAL){ currentStep++; render(); }
+      else { hideOnboarding(); }
+    });
+    overlay.addEventListener('click', function(e){
+      if(e.target === overlay) hideOnboarding();
+    });
+
+    // Replay entry point, lives in the "من نحن" modal — bound here
+    // (not in bindAuthUI()) so it works immediately, not just after
+    // boot()'s DB chain finishes. See window.YQN_closeAboutModal above.
+    var replayBtn = byId('yqnAboutReplayTour');
+    if(replayBtn) replayBtn.addEventListener('click', function(){
+      if(window.YQN_closeAboutModal) window.YQN_closeAboutModal();
+      setTimeout(showOnboarding, 260);
+    });
+
+    // First-ever visit only, and independent of boot()'s IndexedDB
+    // open/seed chain on purpose — same reasoning as the
+    // bootNavEagerly() fix for Theme.init(): nothing this overlay
+    // needs (icons, copy, localStorage) depends on the legal-corpus
+    // database, so gating it behind that chain would delay or skip
+    // it on a slow first load for no reason.
+    if(!onbSeen()) showOnboarding();
+  });
+})();
+</script>
+
 <!-- ============================================================
      [NEW] SUBSCRIPTION CHECKOUT SIMULATION — opened when a logged-in
      user clicks "اشترك" on a pricing card (#pricing .price-btn). This
@@ -16875,16 +17326,16 @@ body.ltr-mode .docmgr-progress-bar {
         </div>
         <div class="yqn-auth-field">
           <label for="ckCard">رقم البطاقة</label>
-          <input type="text" id="ckCard" placeholder="0000 0000 0000 0000" inputmode="numeric" maxlength="19" autocomplete="cc-number" required>
+          <input type="text" id="ckCard" placeholder="0000 0000 0000 0000" inputmode="numeric" maxlength="19" autocomplete="cc-number" dir="ltr" style="text-align:right" required>
         </div>
         <div class="yqn-checkout-row">
           <div class="yqn-auth-field">
             <label for="ckExpiry">تاريخ الانتهاء</label>
-            <input type="text" id="ckExpiry" placeholder="MM/YY" inputmode="numeric" maxlength="5" autocomplete="cc-exp" required>
+            <input type="text" id="ckExpiry" placeholder="MM/YY" inputmode="numeric" maxlength="5" autocomplete="cc-exp" dir="ltr" required>
           </div>
           <div class="yqn-auth-field">
             <label for="ckCvv">CVV</label>
-            <input type="text" id="ckCvv" placeholder="•••" inputmode="numeric" maxlength="4" autocomplete="cc-csc" required>
+            <input type="text" id="ckCvv" placeholder="•••" inputmode="numeric" maxlength="4" autocomplete="cc-csc" dir="ltr" required>
           </div>
         </div>
         <button type="submit" class="yqn-checkout-submit" id="yqnCheckoutSubmit">تأكيد الاشتراك</button>
@@ -17989,10 +18440,10 @@ body.ltr-mode .docmgr-progress-bar {
         </button>
         <div class="killer-more">
           <div class="killer-more-inner">
-          <p>قبل إصدار أي قانون، شغّل محاكاة آنية: ما الذي سيتغير في المنظومة القانونية؟ أي المواد ستتأثر؟ ما التعارضات المحتملة؟ تقرير شامل في 30 ثانية بدلاً من أشهر من الدراسة.</p>
-          <div class="killer-example"><strong>مثال حيّ (سبتمبر 2026):</strong> محاكاة أثر العودة إلى تنفيذ الإعدام حصراً في جرائم الحرائق العمدية وخطف القصّر، بعد وقف دام منذ 1993 — التعارضات المحتملة مع الاتفاقيات الدولية المصادَق عليها والمواد الدستورية ذات الصلة، في تقرير فوري.</div>
-          <span class="killer-tag">🎯 Constitutional Impact Simulator · في طور التطوير</span>
-          <button type="button" class="killer-run-btn" data-killer="3">▶ شغّل الميزة على هذا المثال</button>
+          <p>اختاري أي موضوع من "الربط الذكي الرباعي" أعلاه، ثم شغّلي المحاكي: أي المواد الدستورية ستتأثر؟ ما نقاط التعارض المحتملة المكتشفة آلياً؟ كم سابقة قضائية ونظاماً مقارناً مرتبط؟ — تقرير محسوب فعلياً لكل موضوع، وليس نصاً ثابتاً واحداً.</p>
+          <div class="killer-example"><strong>كيف يعمل:</strong> محرك فحص قائم على قواعد كلمات مفتاحية يقرأ بيانات الموضوع المختار (المواد الدستورية، الالتزامات الدولية، القانون المقارن، الاجتهادات) الموثقة أصلاً في الربط الرباعي، ويحسب منها تقريراً مختلفاً لكل موضوع. إن لم تختاري موضوعاً، يعرض المثال الافتراضي: تفعيل حكم الإعدام في جرائم الحرائق العمدية وخطف القصّر.</div>
+          <span class="killer-tag">🎯 Constitutional Impact Simulator · نسخة تجريبية تعمل فعلياً (قواعد فحص، وليست نموذج تعلّم آلي)</span>
+          <button type="button" class="killer-run-btn" data-killer="3">▶ شغّل المحاكي على الموضوع المختار</button>
           </div>
         </div>
       </div>
@@ -18016,7 +18467,7 @@ body.ltr-mode .docmgr-progress-bar {
       <div class="quad-search" id="quadSearchTrigger" role="button" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="quadTopicsDropdown">
         <span class="lupe"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#yqn-ic-2"></use></svg></span>
         <span>بحث عن: </span>
-        <span class="target" id="quadSearchTarget">"مبدأ استقلالية القضاء في الجزائر"</span>
+        <span class="target" id="quadSearchTarget">اختر موضوعًا من القائمة</span>
         <span class="ttl">– الربط الرباعي التلقائي</span>
         <span class="quad-search-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
         <!-- [NEW] Topic dropdown — was a single static example (see
@@ -18033,48 +18484,28 @@ body.ltr-mode .docmgr-progress-bar {
           <div class="level-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#yqn-ic-7"></use></svg></div>
           <h3>الدستور الجزائري</h3>
           <p class="level-sub">المرجع الأعلى للنظام القانوني</p>
-          <ul id="quadLevel1List">
-            <li>المادة 165: استقلالية القضاء</li>
-            <li>المادة 166: ضمانات القضاة</li>
-            <li>المادة 167: المجلس الأعلى للقضاء</li>
-            <li>المادة 157: المحكمة الدستورية</li>
-          </ul>
+          <ul id="quadLevel1List"></ul>
         </div>
         <!-- Level 2 -->
         <div class="level" id="quadLevelCard2" data-level="1" role="button" tabindex="0" aria-haspopup="dialog">
           <div class="level-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#yqn-ic-27"></use></svg></div>
           <h3>المعاهدات الدولية</h3>
           <p class="level-sub">الالتزامات الدولية للدولة</p>
-          <ul id="quadLevel2List">
-            <li>ICCPR المادة 14: محاكمة عادلة</li>
-            <li>مبادئ بنغالور للقضاء</li>
-            <li>ميثاق الأمم المتحدة م.2</li>
-            <li>اتفاقية مناهضة الفساد</li>
-          </ul>
+          <ul id="quadLevel2List"></ul>
         </div>
         <!-- Level 3 -->
         <div class="level" id="quadLevelCard3" data-level="2" role="button" tabindex="0" aria-haspopup="dialog">
           <div class="level-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M2.5 9h19M2.5 15h19M12 3c-2.5 3-2.5 15 0 18M12 3c2.5 3 2.5 15 0 18"/></svg></div>
           <h3>القانون المقارن</h3>
           <p class="level-sub">تحليل الأنظمة القانونية المقارنة</p>
-          <ul id="quadLevel3List">
-            <li>فرنسا: م.64 الدستور – المجلس الأعلى</li>
-            <li>المغرب: م.107-128 دستور 2011</li>
-            <li>تونس: م.102 دستور 2022</li>
-            <li>مصر: م.184 دستور 2014</li>
-          </ul>
+          <ul id="quadLevel3List"></ul>
         </div>
         <!-- Level 4 -->
         <div class="level" id="quadLevelCard4" data-level="3" role="button" tabindex="0" aria-haspopup="dialog">
           <div class="level-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#yqn-ic-0"></use></svg></div>
           <h3>الاجتهادات القضائية</h3>
           <p class="level-sub">تفسير وتطبيق النصوص القانونية</p>
-          <ul id="quadLevel4List">
-            <li>م.د قرار Q-2021/18: استقلالية</li>
-            <li>م.عليا غ.إدارية 4520/2019</li>
-            <li>م.الدولة ق.3 رقم 201934</li>
-            <li>م.د رقابة 09/2022: حصانة</li>
-          </ul>
+          <ul id="quadLevel4List"></ul>
         </div>
       </div>
 
@@ -18479,7 +18910,14 @@ body.ltr-mode .docmgr-progress-bar {
   const listEls  = [1,2,3,4].map(n=> document.getElementById('quadLevel'+n+'List'));
   if(!trigger || !dropdown || !targetEl || listEls.some(el=>!el)) return;
 
-  let activeIdx = 0;
+  // [FIX — "اخفِ من مربع البحث العبارة الافتراضية والنتائج التابعة لها"]
+  // Was `= 0`, which matched QUAD_TOPICS[0] ("مبدأ استقلالية القضاء")
+  // — the exact static default the HTML above used to hardcode too.
+  // Now -1 (no topic selected) so nothing is pre-highlighted in the
+  // dropdown and openQuadLevelDetail()'s `QUAD_TOPICS[activeIdx]`
+  // lookup safely resolves to undefined → its existing "لا توجد عناصر
+  // لعرضها" fallback, rather than needing a separate guard here.
+  let activeIdx = -1;
 
   function renderOptions(){
     dropdown.innerHTML = QUAD_TOPICS.map((t,i)=>
@@ -18808,21 +19246,70 @@ body.ltr-mode .docmgr-progress-bar {
     return parts.join('');
   }
 
+  /* ============================================================
+     [NEW] REAL Constitutional Impact Simulator engine — added at
+     أميرة's request to replace the single hardcoded arson/kidnapping
+     preview with an engine that actually computes a distinct report
+     for ANY of the QUAD_TOPICS entries (12 as of this build), using
+     only text already present and verified in that topic's own
+     levels[] arrays (never invented). This is a transparent,
+     rule-based (keyword/pattern) analysis engine — NOT a trained ML
+     model and not a full legal-drafting simulation; it says so in
+     its own closing note. IMPACT_RULES below is the ruleset it scans
+     each topic's combined text against; extend it as more legal
+     domains are added to QUAD_TOPICS.
+     ============================================================ */
+  const IMPACT_RULES = [
+    {test:/طفل|قاصر|حدث|القصّر|القصر/, label:'حماية القصّر/الأحداث', note:'الموضوع يمسّ نصوصاً متعلقة بالقصّر أو الأحداث؛ يستوجب التحقق من توافق أي تشديد أو إجراء مع الالتزامات الدولية لحماية الطفل ومصلحته الفضلى.'},
+    {test:/إعدام/, label:'الحق في الحياة وعقوبة الإعدام', note:'الموضوع يمسّ عقوبة الإعدام؛ يستوجب التحقق من قصرها على أشد الجرائم خطورة، مقارنة باتجاه بعض الأنظمة المقارنة نحو إلغائها أو تقييدها.'},
+    {test:/معطي|بيانات|خصوصية|المراسلات/, label:'حماية المعطيات الشخصية', note:'الموضوع يمسّ معطيات شخصية أو خصوصية؛ يستوجب التحقق من التوافق مع ضوابط جمع ومعالجة البيانات المعتمدة دولياً ومقارناً.'},
+    {test:/إرهاب|الجريمة المنظمة/, label:'موازنة الأمن مع الضمانات الإجرائية', note:'الموضوع يتصل بمكافحة الإرهاب أو الجريمة المنظمة؛ يستوجب التحقق من عدم مساس الإجراءات الاستثنائية بضمانات المحاكمة العادلة وحقوق الدفاع.'},
+    {test:/انتخاب|الأحزاب/, label:'التعددية السياسية والحياد الإداري', note:'الموضوع يتصل بالانتخابات أو الأحزاب؛ يستوجب التحقق من تكافؤ الفرص وحياد الإدارة واستقلالية الهيئة المشرفة على العملية الانتخابية.'},
+    {test:/فساد|النزاهة/, label:'قرينة البراءة وضمانات التحقيق', note:'الموضوع يتصل بمكافحة الفساد؛ يستوجب التحقق من توازن صلاحيات التحقيق والتحري مع قرينة البراءة وحق الدفاع.'},
+    {test:/ثروات|محروقات|مناجم/, label:'السيادة على الموارد الطبيعية والتزامات الاستثمار', note:'الموضوع يتصل بالثروات الطبيعية؛ يستوجب التحقق من التوازن بين السيادة الوطنية والالتزامات التعاقدية تجاه المستثمرين الأجانب.'},
+    {test:/تجارة|استثمار|المقاولة/, label:'حرية الاستثمار وحماية المستهلك', note:'الموضوع يتصل بحرية التجارة أو الاستثمار؛ يستوجب التحقق من التوازن مع حماية المستهلك والمصلحة العامة.'},
+    {test:/صحافة|الإعلام/, label:'حرية الصحافة وحدودها', note:'الموضوع يتصل بحرية الصحافة والإعلام؛ يستوجب التحقق من عدم تجاوز أي تقييد للحدود التي رسمتها المعايير الدولية لحرية التعبير.'},
+    {test:/استقلال/, label:'استقلال القضاء', note:'الموضوع يتصل باستقلال القضاء؛ يستوجب التحقق من ضمانات عدم قابلية القضاة للعزل وحياد آليات التعيين والترقية.'},
+    {test:/رجعي/, label:'مبدأ عدم الرجعية', note:'يظهر في النصوص المرتبطة إشارة إلى إمكانية أثر رجعي؛ يستوجب التنصيص الصريح على نطاق سريان النص زمنياً.'}
+  ];
+
+  function flattenTopicText(topic){
+    return (topic && topic.levels ? topic.levels : []).map(arr=> (arr||[]).join(' | ')).join(' \n ');
+  }
+
+  function computeImpactMatches(topic){
+    const text = flattenTopicText(topic);
+    return IMPACT_RULES.filter(r=> r.test.test(text));
+  }
+
   function buildKillerFeature3(topic){
+    if(!topic) return killerNote('تعذّر العثور على موضوع محدد لتشغيل المحاكي عليه — اختاري موضوعاً من قائمة "الربط الذكي الرباعي" أعلاه ثم أعيدي المحاولة.');
+    const levels = topic.levels || [[],[],[],[]];
+    const constArticles = levels[0] || [];
+    const treaties = levels[1] || [];
+    const comparative = levels[2] || [];
+    const rulings = levels[3] || [];
+    const matches = computeImpactMatches(topic);
+
     const items = [
       killerItem(1, 'النصوص المتأثرة مباشرة',
-        'قانون العقوبات (نص التجريم والعقوبة لجريمتي إشعال الحرائق عمداً وخطف القصّر) — قانون تنظيم السجون وإعادة الإدماج الاجتماعي للمحبوسين (إجراءات التنفيذ الفعلي) — قانون الإجراءات الجزائية (الطعن بالنقض أمام المحكمة العليا، وإجراءات عرض ملف الإعدام على رئاسة الجمهورية).',
-        {status:'na', label:'3 نصوص قانونية يتطلب التعديل مراجعتها بالتوازي'}),
-      killerItem(2, 'تعارضات محتملة',
-        'مع المادة 37(أ) من اتفاقية حقوق الطفل إن لم يُستثن صراحة مرتكبو الجريمة من الأحداث؛ ومع مبدأ عدم رجعية القانون الأشد لو طُبّق التعديل بأثر رجعي على وقائع سابقة لدخوله حيز النفاذ.',
-        {status:'mismatch', label:'تعارضان محتملان يستوجبان معالجة صريحة في النص'}),
-      killerItem(3, 'الأثر العملي',
-        'إن نُفِّذ حكم إعدام فعليًا بعد التعديل، فسيكون أول تنفيذ منذ توقف التنفيذ الفعلي سنة 1993 — وهو ما قد يعيد فتح النقاش حول التزامات الجزائر أمام آليات المراجعة الدولية لحقوق الإنسان.',
-        {status:'na', label:'أثر يتجاوز النص القانوني إلى الالتزامات الدولية القائمة'}),
+        (constArticles.length
+          ? constArticles.join('؛ ')
+          : 'لا توجد مواد دستورية مرتبطة موثقة لهذا الموضوع.')
+          + (treaties.length ? ` — إضافة إلى ${treaties.length} التزام(ات) دولية ذات صلة.` : ''),
+        {status:'na', label:`${constArticles.length} نص دستوري و${treaties.length} التزام دولي مرتبطان بهذا الموضوع`}),
+      matches.length
+        ? killerGroup(2, 'نقاط تعارض/انتباه محتملة (مكتشفة آلياً)', `${matches.length} نقطة اكتُشفت بفحص نصوص هذا الموضوع تحديداً`, matches.map(m=> `${m.label} — ${m.note}`))
+        : killerItem(2, 'نقاط تعارض/انتباه محتملة',
+            'لم تكتشف قواعد الفحص الحالية أي إشارة إلى نقاط تعارض معروفة ضمن نص هذا الموضوع تحديداً؛ هذا لا ينفي وجود تعارض، بل يعني فقط أن الكلمات المفتاحية المعتمدة حالياً في المحرك لم تجد مطابقة — يوصى بمراجعة يدوية.',
+            {status:'na', label:'لا مطابقة آلية — لا يغني عن مراجعة يدوية'}),
+      killerItem(3, 'الأثر العملي المقاس',
+        `يرتبط هذا الموضوع بـ ${rulings.length} سابقة قضائية موثقة و${comparative.length} نظاماً/تشريعاً مقارناً ضمن قاعدة اليقين. أي تعديل تشريعي في هذا النطاق سيستدعي مراجعة النصوص التنفيذية والتوفيق مع هذه السوابق والأنظمة المقارنة.`,
+        {status:'na', label:'مقياس محسوب من عدد السوابق والأنظمة المقارنة الموثقة فعلياً، لا نص ثابت'}),
       killerItem(4, 'ملاحظة ختامية',
-        'هذا تقرير توضيحي يبيّن شكل الإخراج المرتقب لهذه الميزة عند اكتمال تطويرها؛ لا يغني عن دراسة قانونية معمّقة قبل عرض أي مشروع على البرلمان.')
+        'هذا تقرير محسوب آلياً بقواعد فحص قائمة على الكلمات المفتاحية عبر بيانات "الربط الذكي الرباعي" الموثقة لهذا الموضوع تحديداً — وليس نموذج تعلّم آلي مدرَّب، ولا محاكاة قانونية كاملة، ولا استشارة قانونية رسمية؛ يتغيّر تلقائياً حسب الموضوع المختار أعلاه.')
     ];
-    return killerNote('معاينة توضيحية لعمل "محاكي الأثر الدستوري" — الميزة لا تزال قيد التطوير، والنتائج هنا لأغراض العرض فقط.') + items.join('');
+    return killerNote(`تحليل آلي حي لموضوع: ${topic.query} — قائم على قواعد فحص فعلية، وليس نصاً ثابتاً.`) + items.join('');
   }
 
   const KILLER_META = {
@@ -18841,7 +19328,15 @@ body.ltr-mode .docmgr-progress-bar {
   function openKillerDemo(n){
     const meta = KILLER_META[n];
     if(!meta || !killerOverlay) return;
-    const topic = findDeathPenaltyTopic();
+    // Feature 3 (محاكي الأثر الدستوري) is a real per-topic engine: it
+    // reads whichever topic is currently selected in "الربط الذكي
+    // الرباعي" above (activeIdx), falling back to the death-penalty
+    // example when nothing is selected. Features 1 & 2 stay fixed on
+    // the death-penalty example only, at أميرة's explicit request —
+    // do not extend them to other topics.
+    const topic = (n===3 && typeof activeIdx==='number' && activeIdx>=0 && QUAD_TOPICS[activeIdx])
+      ? QUAD_TOPICS[activeIdx]
+      : findDeathPenaltyTopic();
     if(killerBadge) killerBadge.textContent = meta.badge;
     if(killerTitle) killerTitle.textContent = meta.title;
     if(killerSub) killerSub.textContent = topic ? topic.query : '';
@@ -18849,6 +19344,7 @@ body.ltr-mode .docmgr-progress-bar {
     killerOverlay.classList.add('active');
     document.body.style.overflow = 'hidden';
   }
+  window.YQN_openKillerDemo = openKillerDemo;
   function closeKillerDemo(){
     if(!killerOverlay) return;
     killerOverlay.classList.remove('active');
@@ -18862,6 +19358,71 @@ body.ltr-mode .docmgr-progress-bar {
   document.addEventListener('keydown', (e)=>{
     if(e.key==='Escape' && killerOverlay && killerOverlay.classList.contains('active')) closeKillerDemo();
   });
+
+  /* ============================================================
+     [NEW] REAL "العدالة التنبؤية" (Predictive Justice) engine —
+     added at أميرة's request, explicitly as a RULE-BASED QUALITATIVE
+     indicator, NOT a trained ML model and NOT a probability
+     percentage — there is no case-outcome dataset (verdict rates,
+     court statistics) anywhere in this platform to train or compute
+     a real percentage from. What DOES exist, and what this engine
+     actually measures, is precedent density and legal-domain
+     complexity already documented per topic in QUAD_TOPICS: how many
+     Supreme Court / Constitutional Court rulings are on record, how
+     many comparative jurisdictions were surveyed, and how many known
+     complexity factors (IMPACT_RULES) apply. It reuses the exact same
+     ruleset as the Impact Simulator so a topic's flags stay
+     consistent across both tools. Reuses the killer-demo overlay for
+     display since it's the same UI pattern.
+     ============================================================ */
+  function buildPredictiveJustice(topic){
+    if(!topic) return killerNote('تعذّر العثور على موضوع محدد — اختاري موضوعاً من قائمة "الربط الذكي الرباعي" أعلاه ثم أعيدي المحاولة.');
+    const levels = topic.levels || [[],[],[],[]];
+    const rulings = levels[3] || [];
+    const comparative = levels[2] || [];
+    const matches = computeImpactMatches(topic);
+
+    let overall, overallStatus;
+    if(rulings.length === 0){
+      overall = 'لا توجد سابقة قضائية موثقة لهذا الموضوع في قاعدة اليقين — لا يمكن استخلاص أي مؤشر اتجاه قضائي، موثق أو غير موثق.';
+      overallStatus = 'na';
+    } else if(matches.length === 0){
+      overall = `يستند هذا الموضوع إلى ${rulings.length} سابقة قضائية موثقة دون عوامل تعقيد قانوني إضافية معروفة — كثافة السوابق نسبياً واضحة، مع بقاء الحاجة لمراجعة كل واقعة على حدة.`;
+      overallStatus = 'match';
+    } else {
+      overall = `يستند هذا الموضوع إلى ${rulings.length} سابقة قضائية موثقة، إلى جانب ${matches.length} عامل(عوامل) تعقيد قانوني معروف(ة) قد تؤثر على التوقع — هذا يستدعي حذراً إضافياً عند قراءة أي اتجاه مستنبط من السوابق.`;
+      overallStatus = 'mismatch';
+    }
+
+    const items = [
+      killerItem(1, 'مؤشر كثافة السوابق (نوعي — ليس نسبة مئوية)', overall, {status:overallStatus, label:'مؤشر نوعي محسوب من عدد السوابق وعوامل التعقيد الموثقة فعلياً'}),
+      rulings.length
+        ? killerGroup(2, 'السوابق القضائية الداعمة', 'المصدر: اجتهادات المحكمة العليا/الدستورية الموثقة', rulings)
+        : killerItem(2, 'السوابق القضائية الداعمة', 'لا توجد سوابق موثقة في القاعدة لهذا الموضوع.', {status:'na', label:'فراغ في قاعدة السوابق لهذا الموضوع تحديداً'}),
+      comparative.length
+        ? killerGroup(3, 'أنظمة مقارنة قد تفيد قراءة الاتجاه', 'المصدر: تشريعات عربية وأجنبية مقارنة', comparative)
+        : killerItem(3, 'أنظمة مقارنة', 'لا توجد أنظمة مقارنة موثقة لهذا الموضوع.', {status:'na', label:'—'}),
+      matches.length
+        ? killerGroup(4, 'عوامل تعقيد قانوني مكتشفة آلياً', `${matches.length} عامل قد يعقّد أي قراءة للاتجاه القضائي`, matches.map(m=> `${m.label} — ${m.note}`))
+        : killerItem(4, 'عوامل تعقيد قانوني', 'لم تكتشف قواعد الفحص الحالية أي عامل تعقيد معروف ضمن هذا الموضوع تحديداً.', {status:'na', label:'لا مطابقة آلية'}),
+      killerItem(5, 'ملاحظة ختامية إلزامية',
+        'هذا مؤشر نوعي محسوب بقواعد فحص من كثافة السوابق الموثقة وعوامل التعقيد المعروفة — وليس نسبة احتمالية حقيقية، ولا نموذج تعلّم آلي مدرَّب على بيانات أحكام فعلية (لا توجد مثل هذه البيانات في المنصة)، ولا تنبؤاً بمآل أي قضية بعينها، ولا استشارة قانونية رسمية.')
+    ];
+    return killerNote(`مؤشر عدالة تنبؤية نوعي لموضوع: ${topic.query} — قائم على كثافة سوابق موثقة، وليس نسبة مئوية.`) + items.join('');
+  }
+
+  const pjOverlay = document.getElementById('yqnKillerDetailOverlay');
+  function openPredictiveJusticeDemo(){
+    if(!pjOverlay) return;
+    const topic = findDeathPenaltyTopic();
+    if(killerBadge) killerBadge.textContent = '⚖️ العدالة التنبؤية (مؤشر نوعي)';
+    if(killerTitle) killerTitle.textContent = 'مؤشر كثافة السوابق وعوامل التعقيد';
+    if(killerSub) killerSub.textContent = topic ? topic.query : '';
+    if(killerBody) killerBody.innerHTML = buildPredictiveJustice(topic);
+    pjOverlay.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+  window.YQN_openPredictiveJustice = openPredictiveJusticeDemo;
 })();
 </script>
 
@@ -18982,6 +19543,17 @@ body.ltr-mode .docmgr-progress-bar {
      #liPanel-ai. -->
 <script>
 (function(){
+  // [FIX — "المساعد القانوني الذكي لا يستجيب لأي سؤال"] Same root
+  // cause as the constitutional-timeline fix: this script's own
+  // comment above says the markup was "[MOVED]" into #liPanel-ai
+  // without moving this script block down with it, so
+  // getElementById('legalChatInput'/'legalChatSend'/'legalChatMessages')
+  // all returned null at the time this IIFE actually ran — the guard
+  // clause below then exited before ever attaching the send/Enter
+  // listeners. Deferring the whole body to DOMContentLoaded (or
+  // running immediately if already past loading) lets it find the
+  // real elements regardless of script/markup order in the document.
+  function init(){
   const input    = document.getElementById('legalChatInput');
   const sendBtn  = document.getElementById('legalChatSend');
   const messages = document.getElementById('legalChatMessages');
@@ -19085,6 +19657,13 @@ body.ltr-mode .docmgr-progress-bar {
 
   sendBtn.addEventListener('click', ()=> handleLegalChatQuestion(input.value));
   input.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); handleLegalChatQuestion(input.value); } });
+  } // end init()
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 })();
 </script>
 
@@ -24647,6 +25226,10 @@ body.ltr-mode .docmgr-progress-bar {
       }, 250);
     }
     window.YQN_openAboutModal = openAboutModal;
+    // [NEW] exposed for the onboarding replay button, which binds eagerly
+    // (independent of bindAuthUI()'s post-DB-boot timing) — see the
+    // onboarding overlay's own DOMContentLoaded block.
+    window.YQN_closeAboutModal = closeAboutModal;
 
     // المدونة overlay — same mechanism as the terms/contact/about modals
     function openBlogModal(){
@@ -25608,12 +26191,27 @@ body.ltr-mode .docmgr-progress-bar {
       // Hub fresh from the homepage.
       if(!opts.forceHome && service.returnTo === 'advHub' && window.YQN_openAdvHub){
         section.classList.remove('yqn-ws-visible', 'yqn-workspace-mode');
-        // [FIX — "page stuck on homepage" bug] #geomap is the one section
-        // gated by an inline style="display:none" instead of the
-        // .yqn-revealed CSS class the other three use (see __yqnOpenGeomap
-        // above) — nothing ever set it back, so once opened it stayed
-        // visibly rendered in the normal homepage flow forever after.
+        // [FIX — "page stuck on homepage" bug] #geomap is gated by an
+        // inline style="display:none" instead of the .yqn-revealed CSS
+        // class the other three sections use (see __yqnOpenGeomap above),
+        // so it needs this separate reset.
         if(service.sectionId === 'geomap') section.style.display = 'none';
+        // [FIX — "تحليل الخصم (وبقية البطاقات) تبقى عالقة فوق الواجهة بعد
+        // الخروج منها والعودة للصفحة الرئيسية"] enterSectionWorkspace()
+        // adds 'yqn-revealed' to lift #archive/#ai/#docmanage out of
+        // their default display:none (see the CSS rule + comment on
+        // yqnRestoreOutsideDisplay() above, which already documents this
+        // exact class-vs-inline-style split) — but nothing here was ever
+        // removing it again on exit. Stripping yqn-workspace-mode/
+        // yqn-ws-visible only turns off the FIXED, full-screen overlay
+        // presentation; with yqn-revealed still set, #id.yqn-revealed{
+        // display:block} keeps the section permanently visible as a
+        // stray block sitting inline in the normal homepage flow —
+        // showing its last-active tab (e.g. the "تحليل الخصم" panel) on
+        // top of, and pushing down, whatever comes after it. Harmless
+        // no-op for #compliance (never gated by this class) and #geomap
+        // (already handled above).
+        section.classList.remove('yqn-revealed');
         const outsideAdv = yqnServiceOutsideEls(service.sectionId);
         outsideAdv.forEach(function(el){ el.classList.remove('yqn-workspace-mode', 'yqn-ws-visible', 'yqn-ws-homefade'); yqnRestoreOutsideDisplay(el); el.removeAttribute('inert'); });
         document.documentElement.classList.remove('yqn-ws-lock');
@@ -25640,6 +26238,10 @@ body.ltr-mode .docmgr-progress-bar {
       if(!opts.forceHome && service.returnTo === 'dashboard' && typeof enterDashboardWorkspace === 'function'){
         section.classList.remove('yqn-ws-visible', 'yqn-workspace-mode');
         if(service.sectionId === 'geomap') section.style.display = 'none';
+        // [FIX — "الخدمة تبقى عالقة فوق الواجهة بعد الخروج منها"] same
+        // missing yqn-revealed reset as the advHub branch above — see its
+        // comment for the full explanation.
+        section.classList.remove('yqn-revealed');
         const outsideDash = yqnServiceOutsideEls(service.sectionId);
         outsideDash.forEach(function(el){ el.classList.remove('yqn-workspace-mode', 'yqn-ws-visible', 'yqn-ws-homefade'); yqnRestoreOutsideDisplay(el); el.removeAttribute('inert'); });
         document.documentElement.classList.remove('yqn-ws-lock');
@@ -25659,6 +26261,13 @@ body.ltr-mode .docmgr-progress-bar {
         // so this generic exit path (browser Back / non-hub exits) must
         // also put it back to display:none or it stays visible for good.
         if(service.sectionId === 'geomap') section.style.display = 'none';
+        // [FIX — "الخدمة تبقى عالقة فوق الواجهة بعد الخروج منها"] same
+        // missing yqn-revealed reset as the advHub branch above — this
+        // generic exit path (browser Back, the breadcrumb "الصفحة
+        // الرئيسية" forceHome exit, and any non-hub/non-dashboard exit)
+        // needs it too, since it's the most common way users actually
+        // leave a workspace.
+        section.classList.remove('yqn-revealed');
         const outside = yqnServiceOutsideEls(service.sectionId);
         // [FIX — comprehensive navigation audit] Defensive mirror of the
         // same strip in enterSectionWorkspace() above: never restore an
@@ -25788,6 +26397,7 @@ body.ltr-mode .docmgr-progress-bar {
     const YQN_BLOCKING_OVERLAY_IDS = {
       yqnAboutFullOverlay:'active', yqnBlogFullOverlay:'active', yqnServicesFullOverlay:'active', yqnAdvHubOverlay:'active',
       yqnPremiumOverlay:'active', yqnAuthOverlay:'active', yqnRegSuccessOverlay:'active',
+      yqnOnboardingOverlay:'active',
       yqnLegalOverlay:'active', yqnTermsFullOverlay:'active', yqnContactFullOverlay:'active',
       yqnSalesOverlay:'active',
       yqnAuditOverlay:'active', navDrawer:'open', yqnSettingsPanel:'show', certModal:'open',
@@ -26623,6 +27233,13 @@ body.ltr-mode .docmgr-progress-bar {
       });
       const aboutCtaBtn = $('#yqnAboutFullCta');
       if(aboutCtaBtn) aboutCtaBtn.addEventListener('click', closeAboutModal);
+      // [NEW] #yqnAboutReplayTour is wired eagerly instead, in the
+      // onboarding-overlay's own DOMContentLoaded block below — NOT here,
+      // because bindAuthUI() only runs after YaqeenDB.open()/seedIfEmpty()
+      // resolve (~4s on a fresh session, see boot() above), so a listener
+      // attached here would silently do nothing for that whole window —
+      // the exact binding-dead-until-boot-finishes bug already found once
+      // in this file for Theme.init()/the mobile nav drawer.
 
       // المدونة modal — close button + click-outside + ESC
       const blogCloseBtn = $('#yqnBlogFullClose');
@@ -26781,6 +27398,28 @@ body.ltr-mode .docmgr-progress-bar {
       const advHubBackBtn = $('#yqnAdvHubBackBtn');
       if(advHubBackBtn) advHubBackBtn.addEventListener('click', ()=>{
         closeAdvHub();
+        // [FIX — "الخدمات المتقدمة back button lands on the last-opened
+        // service instead of the homepage"] This button only ever closed
+        // the Hub overlay itself. If a Service Workspace launched FROM
+        // the Hub (returnTo:'advHub') was still active underneath — e.g.
+        // the user opened a service, then the Hub got reopened over it
+        // (browser Back, a notification link, re-clicking "استكشف جميع
+        // خدمات YaqeenLex") without that workspace ever being properly
+        // exited — closing the Hub alone left that workspace's
+        // full-screen yqn-workspace-mode layer covering the whole
+        // viewport, so this "⬅ العودة إلى الصفحة الرئيسية" button
+        // visually dropped the user back onto whichever service they'd
+        // last opened (e.g. "البحث والتحليل والاستدلال القانوني")
+        // instead of the homepage it promises. Force that workspace
+        // closed first — the exact same { forceHome:true } the
+        // "الرئيسية" breadcrumb link already uses for this — so this
+        // button always actually reaches the homepage, matching the rule
+        // that a page must return to wherever it was originally opened
+        // from.
+        if(__yqnCurrentService && typeof exitServiceWorkspace === 'function'){
+          exitServiceWorkspace({ forceHome: true });
+          return;
+        }
         const hero = document.getElementById('hero');
         if(hero) hero.scrollIntoView({behavior:'smooth', block:'start'});
       });
@@ -29008,6 +29647,23 @@ mark {
     }
 
     async function boot(){
+      // [FIX — "زر تسجيل الدخول لا يستجيب لأول ~10 ثوانٍ"] bindAuthUI()
+      // and Auth.restore() used to sit at the end of this function,
+      // after the full document-corpus seed/reseed sequence below —
+      // so #navLoginBtn's click listener wasn't attached until that
+      // finished (routinely 10+ seconds for 1,300+ documents on a
+      // fresh profile). Neither call has any real dependency on that
+      // seeding: bindAuthUI() only wires up static DOM buttons/forms,
+      // and Auth.restore() (see its definition) reads sessionStorage
+      // synchronously, never IndexedDB. Running both immediately, before
+      // YaqeenDB.open()/seedIfEmpty(), makes the login button (and a
+      // returning user's session restore) responsive the instant the
+      // page loads, while the corpus seed continues in the background
+      // exactly as before for everything that does need it (search,
+      // the quad-link engine, etc.).
+      bindAuthUI();
+      Auth.restore();
+
       try{
         await YaqeenDB.open();
         await YaqeenDB.seedIfEmpty();
@@ -29037,9 +29693,6 @@ mark {
       } catch(err){
         console.warn('[YaqeenLex V15] DB init failed:', err);
       }
-
-      bindAuthUI();
-      Auth.restore();
 
       if(Auth.isLoggedIn()){
         renderUserBadge();
@@ -34861,6 +35514,9 @@ mark {
       // dashboard" / "stay on the homepage") are the only ways out, so
       // Escape maps to the non-destructive one.
       yqnRegSuccessOverlay:   { activeClass:'active', closeSelector:'#yqnRegStay' },
+      // [NEW] Onboarding tour — Escape maps to the skip button, same
+      // non-destructive-action pattern as yqnRegSuccessOverlay above.
+      yqnOnboardingOverlay:   { activeClass:'active', closeSelector:'#yqnOnbSkipBtn' },
       yqnLegalOverlay:        { activeClass:'active' },
       yqnTermsFullOverlay:    { activeClass:'active' },
       yqnContactFullOverlay:  { activeClass:'active' },
